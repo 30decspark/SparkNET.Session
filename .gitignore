@@ -1,0 +1,11 @@
+﻿﻿.vs/
+.vscode/
+bin/
+obj/
+*.suo
+*.user
+*.useros
+*.sln
+*.csproj.user
+*.vcxproj
+*.vcxproj.user
