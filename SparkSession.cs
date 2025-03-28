@@ -7,132 +7,137 @@ namespace SparkNET.Session
 {
     public class SparkSession(IHttpContextAccessor context, SessionOption option)
     {
-        private Dictionary<string, string> session = [];
-        private bool loaded = false;
-        private readonly string? auth = context.HttpContext.Request.Headers[option.Name];
+        private bool _loaded = false;
+        private Dictionary<string, string> _session = [];
+        private readonly string? _auth = context.HttpContext.Request.Headers[option.Name];
 
-        public string? Get(string key)
+        public string? this[string key]
         {
-            if (!loaded)
+            get
             {
-                session = GetData(auth);
-                loaded = true;
+                if (_loaded == false)
+                {
+                    _session = GetData(_auth);
+                    _loaded = true;
+                }
+                return _session.TryGetValue(key, out string? value) ? value : null;
             }
-            return session.TryGetValue(key, out string? value) ? value : null;
-        }
+            set
+            {
+                if (string.IsNullOrEmpty(key)) return;
 
-        public void Set(string key, string? value)
-        {
-            if (!loaded)
-            {
-                session = GetData(auth);
-                loaded = true;
-            }
-            if (string.IsNullOrEmpty(value)) return;
-            session[key] = value;
-        }
+                if (_loaded == false)
+                {
+                    _session = GetData(_auth);
+                    _loaded = true;
+                }
 
-        public void Remove(string key)
-        {
-            if (!loaded)
-            {
-                session = GetData(auth);
-                loaded = true;
+                if (value == null)
+                {
+                    _session.Remove(key);
+                    return;
+                }
+
+                _session[key] = value;
             }
-            session.Remove(key);
         }
 
         public void SaveChanges()
         {
-            UpdateData(auth, session);
+            if (_loaded == false) return;
+            UpdateData(_auth, _session);
+        }
+
+        public string Create(string uid, string? cred = null, string device = "", string app = "", string ip = "", int timeout = 30)
+        {
+            string? push = null;
+            string? sock = null;
+            return CreateData(_session, uid, cred, push, sock, device, app, ip, timeout);
         }
 
         public void Destroy()
         {
-            session.Clear();
-            DeleteData(auth);
+            _session = [];
+            DeleteData(_auth);
         }
 
-        public string Create(string user, string? cred, int timeout)
-        {
-            return CreateData(user, cred, timeout, session);
-        }
+        private static string? _provider;
 
-        private static string provider = "Data Source=.session";
-
-        public static void Initialize(string pvd)
+        public static void Initialize(string file = ":memory:")
         {
-            provider = $"Data Source={pvd}";
-            using var db = new SqliteConnection(provider);
-            db.Execute("CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, user TEXT NOT NULL, cred TEXT NULL, data TEXT NOT NULL, timeout INT NOT NULL, expires DATETIME NOT NULL)");
-            db.Execute("DELETE FROM sessions WHERE expires < datetime('now', 'localtime')");
-        }
-
-        public static bool IsValid(string? auth, string? cred)
-        {
-            if (string.IsNullOrEmpty(auth)) return false;
-            using var db = new SqliteConnection(provider);
-            int i = db.Execute("UPDATE sessions SET expires = datetime('now', 'localtime', '+' || timeout || ' minutes') WHERE id = @id AND cred = @cred AND expires > datetime('now', 'localtime')", new {id = auth, cred});
-            return i > 0;
+            _provider = $"Data Source={file}";
+            using var db = new SqliteConnection(_provider);
+            db.Execute("CREATE TABLE IF NOT EXISTS sessions (id TEXT PRIMARY KEY, uid TEXT NOT NULL, cred TEXT NULL, data TEXT NOT NULL, push TEXT NULL, sock TEXT NULL, device TEXT NOT NULL, app TEXT NOT NULL, ip TEXT NOT NULL, created DATETIME NOT NULL, updated DATETIME NOT NULL, timeout INT NOT NULL, expires DATETIME NOT NULL)");
+            db.Execute("DELETE FROM sessions WHERE expires < @now", new { now = DateTime.Now });
         }
 
         public static void ClearExpires()
         {
-            using var db = new SqliteConnection(provider);
-            db.Execute("DELETE FROM sessions WHERE expires < datetime('now', 'localtime')");
+            using var db = new SqliteConnection(_provider);
+            db.Execute("DELETE FROM sessions WHERE expires < @now", new { now = DateTime.Now });
         }
 
-        private static Dictionary<string, string> GetData(string? auth)
+        public static bool IsValid(string? id, string? cred = null, string device = "", string app = "", string ip = "")
         {
-            if (string.IsNullOrEmpty(auth)) return [];
-            using var db = new SqliteConnection(provider);
-            var session = db.QueryFirstOrDefault<string>("SELECT data FROM sessions WHERE id = @id", new { id = auth });
+            if (string.IsNullOrEmpty(id)) return false;
+            using var db = new SqliteConnection(_provider);
+            int i = db.Execute("UPDATE sessions SET device = @device, app = @app, ip = @ip, updated = @now, expires = datetime(@now, '+' || timeout || ' minutes') WHERE id = @id AND cred = @cred AND expires > @now", new { id, cred, device, app, ip, now = DateTime.Now });
+            return i > 0;
+        }
+
+        public static string? GetUID(string? id)
+        {
+            if (string.IsNullOrEmpty(id)) return null;
+            using var db = new SqliteConnection(_provider);
+            return db.QueryFirstOrDefault<string>("SELECT uid FROM sessions WHERE id = @id", new { id });
+        }
+
+        public static string? GetCred(string? id)
+        {
+            if (string.IsNullOrEmpty(id)) return null;
+            using var db = new SqliteConnection(_provider);
+            return db.QueryFirstOrDefault<string>("SELECT cred FROM sessions WHERE id = @id", new { id });
+        }
+
+        private static Dictionary<string, string> GetData(string? id)
+        {
+            if (string.IsNullOrEmpty(id)) return [];
+            using var db = new SqliteConnection(_provider);
+            var session = db.QueryFirstOrDefault<string>("SELECT data FROM sessions WHERE id = @id", new { id });
             if (string.IsNullOrEmpty(session)) return [];
             return JsonConvert.DeserializeObject<Dictionary<string, string>>(session) ?? [];
         }
 
-        private static string CreateData(string user, string? cred, int timeout, Dictionary<string, string> session)
+        public static IEnumerable<SessionModel> GetDataList(string? uid, string? cred)
         {
-            string auth = Guid.NewGuid().ToString("N");
+            if (string.IsNullOrEmpty(uid)) return [];
+            using var db = new SqliteConnection(_provider);
+            return db.Query<SessionModel>("SELECT id, device, app, ip, created, updated, expires FROM sessions WHERE uid = @uid AND cred = @cred AND expires > @now", new { uid, cred, now = DateTime.Now }).ToList();
+        }
+
+        private static string CreateData(Dictionary<string, string> session, string uid, string? cred = null, string? push = null, string? sock = null, string device = "", string app = "", string ip = "", int timeout = 30)
+        {
+            string id = Guid.NewGuid().ToString("N");
             string data = JsonConvert.SerializeObject(session);
-            using var db = new SqliteConnection(provider);
-            db.Execute("INSERT INTO sessions VALUES (@id, @user, @cred, @data, @timeout, @expire)", new { id = auth, user, cred, data, timeout, expire = DateTime.Now.AddMinutes(timeout) });
-            return auth;
+            DateTime now = DateTime.Now;
+            using var db = new SqliteConnection(_provider);
+            db.Execute("INSERT INTO sessions VALUES (@id, @uid, @cred, @data, @push, @sock, @device, @app, @ip, @created, @updated, @timeout, @expires)", new { id, uid, cred, data, push, sock, device, app, ip, created = now, updated = now, timeout, expires = now.AddMinutes(timeout) });
+            return id;
         }
 
-        private static void UpdateData(string? auth, Dictionary<string, string> session)
+        private static void UpdateData(string? id, Dictionary<string, string> session)
         {
-            if (string.IsNullOrEmpty(auth)) return;
+            if (string.IsNullOrEmpty(id)) return;
             string data = JsonConvert.SerializeObject(session);
-            using var db = new SqliteConnection(provider);
-            db.Execute("UPDATE sessions SET data = @data WHERE id = @id", new { id = auth, data });
+            using var db = new SqliteConnection(_provider);
+            db.Execute("UPDATE sessions SET data = @data WHERE id = @id", new { id, data });
         }
 
-        public static void DeleteData(string? auth)
+        public static void DeleteData(string? id)
         {
-            if (string.IsNullOrEmpty(auth)) return;
-            using var db = new SqliteConnection(provider);
-            db.Execute("DELETE FROM sessions WHERE id = @id", new { id = auth });
-        }
-
-        public static string? GetUserId(string? auth)
-        {
-            if (string.IsNullOrEmpty(auth)) return null;
-            using var db = new SqliteConnection(provider);
-            return db.QueryFirstOrDefault<string>("SELECT user FROM sessions WHERE id = @id", new { id = auth });
-        }
-
-        public static string? GetCred(string? auth)
-        {
-            if (string.IsNullOrEmpty(auth)) return null;
-            using var db = new SqliteConnection(provider);
-            return db.QueryFirstOrDefault<string>("SELECT cred FROM sessions WHERE id = @id", new { id = auth });
-        }
-
-        public static List<dynamic> GetList(string? user, string? cred)
-        {
-            using var db = new SqliteConnection(provider);
-            return db.Query("SELECT id, user, cred, timeout, expires FROM sessions WHERE user = @user AND cred = @cred AND expires > datetime('now', 'localtime')", new { user, cred }).ToList();
+            if (string.IsNullOrEmpty(id)) return;
+            using var db = new SqliteConnection(_provider);
+            db.Execute("DELETE FROM sessions WHERE id = @id", new { id });
         }
     }
 }

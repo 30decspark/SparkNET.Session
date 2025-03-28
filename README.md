@@ -8,12 +8,21 @@ To use **SparkNET.Session** for storing user authentication, follow these steps:
 using SparkNET.Session;
 
 // Add Service
-builder.Services.AddHttpContextAccessor();
+builder.Services.AddHttpContextAccessor(); // required
 builder.Services.AddSparkSession();
 
-// Injection
-public class TestController(SparkSession session)
+// Dependency Injection
+private readonly SparkSession session = _session;
 
-// Get Session
-session.Get("US_ID");
+// Get
+string? USER_NAME = session["USER_NAME"];
+
+// Set
+session["USER_NAME"] = USER_NAME;
+
+// Remove
+session["USER_NAME"] = null;
+
+// Commit (after Get/Set/Remove)
+session.SaveChanges();
 ```

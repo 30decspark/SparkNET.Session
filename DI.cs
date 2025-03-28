@@ -2,7 +2,7 @@
 
 namespace SparkNET.Session
 {
-    public static class DependencyInjectionExtension
+    public static class DI
     {
         public static IServiceCollection AddSparkSession(this IServiceCollection services, Action<SessionOption>? action = null)
         {
