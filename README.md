@@ -15,13 +15,13 @@ builder.Services.AddSparkSession();
 private readonly SparkSession session = _session;
 
 // Get
-string? USER_NAME = session["USER_NAME"];
+string? USER_NAME = session.Get("USER_NAME");
 
 // Set
-session["USER_NAME"] = USER_NAME;
+session.Set("USER_NAME", USER_NAME);
 
 // Remove
-session["USER_NAME"] = null;
+session.Remove("USER_NAME");
 
 // Commit (after Get/Set/Remove)
 session.SaveChanges();
